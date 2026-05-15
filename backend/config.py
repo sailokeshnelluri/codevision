@@ -26,12 +26,13 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
 
     # CORS
-    ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://codevision.vercel.app",  # Update with your real domain
-    ]
-
+   ALLOWED_ORIGINS: List[str] = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://codevision.sailokesh.online",
+    "https://codevision-alpha.vercel.app",
+    "https://codevision-git-main-sailokeshnelluris-projects.vercel.app",
+   ]
     # Rate limiting
     RATE_LIMIT_RUN_CODE: str = "10/minute"
     RATE_LIMIT_EXPLAIN:  str = "30/minute"
