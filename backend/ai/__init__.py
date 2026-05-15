@@ -8,39 +8,51 @@ _groq = AsyncGroq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY and le
 
 print(f"DEBUG: Groq client initialized: {_groq is not None}")
 
-TRACE_SYSTEM_PROMPT = """You are CodeVision's execution tracer. Analyze code and return ONLY a valid JSON array.
+TRACE_SYSTEM_PROMPT = """You are CodeVision's execution tracer. Analyze code and return ONLY a valid JSON array. No markdown, no explanation, just the JSON array.
 
 CRITICAL RULES:
-- Return ONLY a JSON array, nothing else, no markdown, no explanation
-- You MUST include variables at every single step
-- Track ALL variable changes step by step
-- For loops create one step per iteration
+- Return ONLY a JSON array starting with [ and ending with ]
+- Every step MUST have variables with actual values
+- NEVER return empty variables {} after line 1
+- Track every variable change carefully
 
-Each step MUST follow this exact format:
+Example of CORRECT step:
 {
-  "line": 2,
-  "code": "name = 'Lokesh'",
+  "line": 11,
+  "code": "int x = 5;",
   "variables": {
-    "name": {
-      "value": "Lokesh",
-      "type": "str",
-      "changed": true
-    }
+    "x": {"value": 5, "type": "int", "changed": true}
   },
   "arrays": {},
-  "stack": [{"name": "main", "line": 2}],
-  "explanation": "Variable name is created and assigned the string Lokesh",
+  "stack": [{"name": "main", "line": 11}],
+  "explanation": "Integer variable x is declared and assigned the value 5.",
   "output": null
 }
 
-IMPORTANT:
-- variables must NEVER be empty {} unless it is the very first line before any assignment
-- For every step after line 1, include ALL variables seen so far
-- Mark changed true only for variables that changed on THIS step
-- For arrays/lists use the arrays field not variables
-- arrays format: {"marks": {"values": [85,90,78], "active_index": 0}}
-- output field should have the print output string or null
-- stack always has at least [{"name": "main", "line": <current_line>}]"""
+Example of CORRECT step with multiple variables:
+{
+  "line": 13,
+  "code": "int sum = x + y;",
+  "variables": {
+    "x": {"value": 5, "type": "int", "changed": false},
+    "y": {"value": 10, "type": "int", "changed": false},
+    "sum": {"value": 15, "type": "int", "changed": true}
+  },
+  "arrays": {},
+  "stack": [{"name": "main", "line": 13}],
+  "explanation": "Variable sum is calculated as x + y which equals 15.",
+  "output": null
+}
+
+RULES:
+- Include ALL variables seen so far in every step
+- Mark changed:true only for variables changed in THIS step
+- For arrays use arrays field: {"numbers": {"values": [1,2,3], "active_index": 0}}
+- For function calls add to stack: [{"name": "main", "line": 10}, {"name": "factorial", "line": 3}]
+- output field contains print/println/cout output or null
+- Generate 10-25 steps for typical programs
+- Skip blank lines and comment lines
+- For loops generate one step per iteration"""
 
 
 async def generate_trace(code: str, language: str) -> List[Dict[str, Any]]:
@@ -55,13 +67,13 @@ async def generate_trace(code: str, language: str) -> List[Dict[str, Any]]:
             max_tokens=4000,
             messages=[
                 {"role": "system", "content": TRACE_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Language: {language}\n\nGenerate execution trace for this code:\n{code}"}
+                {"role": "user", "content": f"Language: {language}\n\nGenerate execution trace with variables for every step:\n{code}"}
             ],
             temperature=0.1,
         )
         raw = response.choices[0].message.content.strip()
         print(f"DEBUG: Groq response length: {len(raw)}")
-        print(f"DEBUG: First 200 chars: {raw[:200]}")
+        print(f"DEBUG: First 300 chars: {raw[:300]}")
 
         raw = re.sub(r'^```json?\s*', '', raw)
         raw = re.sub(r'\s*```$', '', raw)
@@ -74,11 +86,13 @@ async def generate_trace(code: str, language: str) -> List[Dict[str, Any]]:
         print(f"DEBUG: Parsed {len(parsed)} steps")
         if parsed:
             print(f"DEBUG: First step variables: {parsed[0].get('variables', {})}")
+            print(f"DEBUG: Second step variables: {parsed[1].get('variables', {}) if len(parsed) > 1 else 'N/A'}")
 
         return parsed if isinstance(parsed, list) else []
 
     except json.JSONDecodeError as e:
         print(f"DEBUG: JSON parse error: {e}")
+        print(f"DEBUG: Raw response: {raw[:500]}")
         match = re.search(r'\[[\s\S]*\]', raw)
         if match:
             try:
@@ -92,7 +106,7 @@ async def generate_trace(code: str, language: str) -> List[Dict[str, Any]]:
 
 
 def _fallback_trace(code: str) -> List[Dict[str, Any]]:
-    lines = [l for l in code.split('\n') if l.strip() and not l.strip().startswith('#')]
+    lines = [l for l in code.split('\n') if l.strip() and not l.strip().startswith('//') and not l.strip().startswith('#')]
     return [
         {
             "line": i + 1,
